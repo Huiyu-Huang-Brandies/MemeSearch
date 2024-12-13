@@ -11,34 +11,48 @@ milvus_manager = MilvusManager(
 )
 
 # Define folders
-train_folder = "./train"
+
 test_folder = "./test"
 result_image_folder = "./results"
 
 
 # Query test images and save results
-def query_and_save_results(query_image_path, idx):
-    query_image_resized_path = f"query_image_{idx}_resized.jpg"
-    Image.open(query_image_path).resize((150, 150)).save(
-        query_image_resized_path
-    )
+def query_and_save_results(query_image_path, idx, label_filter=None, top_k=4):
+    # Save the original query image
+    query_image_resized_path = f"query_image_{idx}.jpg"
+    Image.open(query_image_path).convert("RGB").save(query_image_resized_path)
 
     query_vector = extractor.extract_features(query_image_path)
-    results = milvus_manager.search_similar(query_vector)
+    results = milvus_manager.search_similar(query_vector, top_k=top_k)
 
-    images = []
+    filtered_results = []
     for result in results:
         for hit in result:
-            filename = hit["entity"]["filename"]
-            img = Image.open(filename).resize((150, 150)).convert("RGB")
-            images.append(img)
+            # Check if "label" exists before filtering
+            if (
+                label_filter is None
+                or hit["entity"].get("label") == label_filter
+            ):
+                filename = hit["entity"]["filename"]
+                img = Image.open(filename).convert("RGB")  # Keep original size
+                filtered_results.append(img)
 
-    # Create concatenated image for top 10 results
-    width, height = 150 * 5, 150 * 2
-    concatenated_image = Image.new("RGB", (width, height))
-    for i, img in enumerate(images[:10]):
-        x, y = i % 5, i // 5
-        concatenated_image.paste(img, (x * 150, y * 150))
+    if not filtered_results:
+        print("No matching images found for the specified label filter.")
+        return query_image_resized_path, None
+
+    # Dynamically determine canvas size based on image dimensions
+    max_width = max(img.width for img in filtered_results[:top_k])
+    max_height = max(img.height for img in filtered_results[:top_k])
+
+    # Create a canvas to display results side by side
+    total_width = max_width * len(filtered_results[:top_k])
+    canvas_height = max_height
+    concatenated_image = Image.new("RGB", (total_width, canvas_height))
+
+    # Paste images into the canvas
+    for i, img in enumerate(filtered_results[:top_k]):
+        concatenated_image.paste(img, (i * max_width, 0))
 
     result_image_path = os.path.join(
         result_image_folder, f"results_meme_image_{idx}.jpg"
@@ -48,16 +62,7 @@ def query_and_save_results(query_image_path, idx):
 
 
 if __name__ == "__main__":
-    # Insert training images into Milvus
-    for filename in os.listdir(train_folder):
-        if filename.endswith(".png"):
-            filepath = os.path.join(train_folder, filename)
-            image_embedding = extractor.extract_features(filepath)
-            milvus_manager.insert_image(
-                image_embedding, {"filename": filepath}
-            )
 
-    # Run search for multiple test images
     os.makedirs(result_image_folder, exist_ok=True)
     num_tests = 5
     test_images = random.sample(os.listdir(test_folder), num_tests)
@@ -65,49 +70,50 @@ if __name__ == "__main__":
     for idx, test_image in enumerate(test_images, start=1):
         query_image_path = os.path.join(test_folder, test_image)
         query_resized, result_path = query_and_save_results(
-            query_image_path, idx
+            query_image_path, idx, label_filter=1  # Only search memes
         )
 
         print(f"Query {idx}: {test_image}")
         print(f"Saved query image as {query_resized}")
-        print(f"Top 1 similar images saved as {result_path}\n")
+        if result_path:
+            print(f"Top 4 similar images saved as {result_path}\n")
+        else:
+            print("No results found.\n")
 
 
-def query_single_image(image_path):
-    # Replace slashes with underscores for the output filename
+def query_single_image(image_path, label_filter=1):
     normalized_name = image_path.replace("/", "_").replace("\\", "_")
-    name, _ = os.path.splitext(normalized_name)  # Remove the file extension
-    query_image_resized_path = f"./results/{name}_query_resized.jpg"
+    name, _ = os.path.splitext(normalized_name)
+    query_image_path = f"./results/{name}_query.jpg"
     top_image_path = f"./results/{name}_top_result.jpg"
 
-    # Convert query image to correct size and ensure it's in RGB mode
-    query_image = Image.open(image_path).resize((150, 150))
-
-    # Convert to RGB if it's not already in RGB mode (JPEG is typically RGB)
+    # Save the original query image
+    query_image = Image.open(image_path)
     if query_image.mode not in ["RGB"]:
         query_image = query_image.convert("RGB")
+    query_image.save(query_image_path)
 
-    query_image.save(query_image_resized_path)
-
-    # Extract features and perform search for top 1 result
     query_vector = extractor.extract_features(image_path)
     results = milvus_manager.search_similar(query_vector, top_k=1)
 
-    # Check if results are valid
-    if not results or not results[0]:
+    filtered_results = [
+        hit
+        for hit in results[0]
+        if label_filter is None or hit["entity"]["label"] == label_filter
+    ]
+
+    if not filtered_results:
         print("No results found for the query image.")
         return
 
-    # Retrieve and display the top result
-    top_result = results[0][0]
+    top_result = filtered_results[0]
     filename = top_result["entity"]["filename"]
 
-    # Open and resize the top result image
-    top_image = Image.open(filename).resize((150, 150))
+    # Keep the original dimensions for the top result image
+    top_image = Image.open(filename)
     if top_image.mode not in ["RGB"]:
         top_image = top_image.convert("RGB")
-
     top_image.save(top_image_path)
 
-    print(f"Query image saved as {query_image_resized_path}")
+    print(f"Query image saved as {query_image_path}")
     print(f"Top result image saved as {top_image_path}\n")
