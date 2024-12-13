@@ -11,7 +11,6 @@ milvus_manager = MilvusManager(
 )
 
 # Define folders
-
 test_folder = "./test"
 result_image_folder = "./results"
 
@@ -62,7 +61,6 @@ def query_and_save_results(query_image_path, idx, label_filter=None, top_k=4):
 
 
 if __name__ == "__main__":
-
     os.makedirs(result_image_folder, exist_ok=True)
     num_tests = 5
     test_images = random.sample(os.listdir(test_folder), num_tests)
